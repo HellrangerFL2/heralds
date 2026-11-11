@@ -1,0 +1,44 @@
+name: Update heralds
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'   # every 30 minutes (GitHub may run it a bit late)
+  workflow_dispatch:          # adds a "Run workflow" button for testing
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ask Steam how many people are playing Cookie Clicker
+        id: steam
+        run: |
+          players=$(curl -sf --retry 3 'https://api.steampowered.com/ISteamUserStats/GetNumberOfCurrentPlayers/v1/?appid=1454400' | jq -r '.response.player_count')
+          if ! [[ "$players" =~ ^[0-9]+$ ]]; then
+            echo "Steam gave a bad answer: $players"
+            exit 1
+          fi
+          heralds=$(( players / 100 ))
+          if [ "$heralds" -gt 100 ]; then heralds=100; fi
+          echo "players=$players" >> "$GITHUB_OUTPUT"
+          echo "heralds=$heralds" >> "$GITHUB_OUTPUT"
+
+      - name: Save it to the "data" branch
+        env:
+          PLAYERS: ${{ steps.steam.outputs.players }}
+          HERALDS: ${{ steps.steam.outputs.heralds }}
+          TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          mkdir out && cd out
+          now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          printf '{"steamPlayers":%s,"heralds":%s,"updated":"%s"}\n' "$PLAYERS" "$HERALDS" "$now" > heralds.json
+          printf '<!doctype html><meta charset="utf-8"><title>Heralds</title><body style="background:#111;color:#eee;font-family:sans-serif;text-align:center;padding-top:20vh"><h1>%s heralds</h1><p>%s Cookie Clicker players on Steam</p><p style="opacity:.6">Updated %s (UTC)</p></body>\n' "$HERALDS" "$PLAYERS" "$now" > index.html
+          git init -q -b data
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -qm "Heralds: $HERALDS ($PLAYERS players)"
+          git push -qf "https://x-access-token:${TOKEN}@github.com/${REPO}.git" data
